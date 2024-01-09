@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"os"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +18,7 @@ type Styles struct{
 type Question struct {
 	question string
 	answer string
+	input Input
 }
 
 func DefaultStyles() *Styles {
@@ -25,75 +28,102 @@ func DefaultStyles() *Styles {
 	return s
 }
 
-type model struct{
+type Main struct{
 	index int
 	questions []Question
 	width int
 	height int
-	answerField textinput.Model
 	styles *Styles
+	done bool
 }
 
-func NewQuestion (question string) Question {
-	return Question{question: question}
+func newQuestion (q string) Question {
+	return Question{question: q}
 }
 
-func New(questions []Question) *model{
+func newShortQuestion(q string) Question {
+	question := newQuestion(q)
+	model := NewShortAnswerField()
+	question.input = model
+	return question
+}
+
+func newLongQuestion(q string) Question {
+	question := newQuestion(q)
+	model := NewLongAnswerField()
+	question.input = model
+	return question
+}
+
+func New(questions []Question) *Main{
 	styles := DefaultStyles()
 	answerField := textinput.New()
 	answerField.Placeholder = "Trage deine Antwort hier ein"
 	answerField.Focus()
-	return &model{questions: questions, answerField: answerField, styles: styles}
+	return &Main{
+		questions: questions, 
+		styles: styles}
 }
 
-func (m model) Init() tea.Cmd {
-	return nil
+func (m Main) Init() tea.Cmd {
+	return m.questions[m.index].input.Blink
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
+func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	current := &m.questions[m.index]
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c":
+		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "enter":
-			current.answer = m.answerField.Value()
-			m.answerField.SetValue("")
-			m.index++
-			log.Printf("Frage: %s, Antwort: %s", current.question, current.answer )
+			if m.index == len(m.questions)-1 {
+				m.done = true
+			}
+			current.answer = current.input.Value()
 			m.Next()
-			return m, nil
+			return m, current.input.Blur
 		}
 	}
-	m.answerField, cmd = m.answerField.Update(msg)
+	current.input, cmd = current.input.Update(msg)
 	return m, cmd
 }
 
-func (m model) View() string {
+func (m Main) View() string {
+	current := m.questions[m.index]
+	if m.done {
+		var output string
+		for _, q := range m.questions {
+			output += fmt.Sprintf("%s: %s\n", q.question, q.answer)
+		}
+		return output
+	}
 	if m.width == 0 {
 		return "loading..."
 	}
+	// stack some left-aligned strings together in the center of the window
 	return lipgloss.Place(
 		m.width,
 		m.height,
 		lipgloss.Center,
 		lipgloss.Center,
-		lipgloss.JoinVertical(lipgloss.Center, 
-			m.questions[m.index].question, 
-			m.styles.InputField.Render(m.answerField.View())),
-		)
-	}
+		lipgloss.JoinVertical(
+			lipgloss.Left,
+			current.question,
+			m.styles.InputField.Render(current.input.View()),
+		),
+	)
+}
 
 	
 	
 	
-func (m *model) Next(){
-	if m.index < len(m.questions) - 1 {
+func (m *Main) Next() {
+	if m.index < len(m.questions)-1 {
 		m.index++
 	} else {
 		m.index = 0
@@ -102,17 +132,18 @@ func (m *model) Next(){
 
 func main() {
 	questions := []Question{
-		NewQuestion("Wie ist dein Name?"),
-		NewQuestion("Was ist dein Geburtsdatum?"), 
-		NewQuestion("Was wünscht du dir für die Zukunft?" )}
-	m := New(questions)
-	f, err := tea.LogToFile("debug.log", "debug")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		log.Fatal(err)
-	}
+		newShortQuestion("Wie ist dein Name?"),
+		newShortQuestion("Was ist dein Geburtsdatum?"), 
+		newLongQuestion("Was wünscht du dir für die Zukunft?" )}
+		main := New(questions)
+		f, err := tea.LogToFile("debug.log", "debug")
+		if err != nil {
+			fmt.Println("fatal:", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		p := tea.NewProgram(*main, tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			log.Fatal(err)
+		}
 }
